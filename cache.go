@@ -179,14 +179,14 @@ func (c *Cache) update(key string, ver int64, wver string, val interface{}) (err
 
 //Expire the cache by key and version.
 //return nil when the local and remote cache is updated, or return fail message.
-func (c *Cache) Expire(keys ...string) (err error) {
+func (c *Cache) Expire(keys ...string) (vers []int64, err error) {
 	if c.Disable {
 		return
 	}
 	for _, key := range keys {
 		c.removeLocal(key)
 	}
-	err = c.expireRemote(keys...)
+	vers, err = c.expireRemote(keys...)
 	return
 }
 
@@ -205,7 +205,7 @@ func (c *Cache) remoteUpdate(key string, ver int64, wver string, data []byte) (e
 	return
 }
 
-func (c *Cache) expireRemote(keys ...string) (err error) {
+func (c *Cache) expireRemote(keys ...string) (vers []int64, err error) {
 	conn := C()
 	defer conn.Close()
 	conn.Send("MULTI")
@@ -213,12 +213,16 @@ func (c *Cache) expireRemote(keys ...string) (err error) {
 		conn.Send("MSET", key+"-val", []byte(""))
 		conn.Send("INCR", key+"-ver")
 	}
-	res, err := conn.Do("EXEC")
+	res, err := redis.Values(conn.Do("EXEC"))
 	if err != nil {
 		log.E("Cache expire remote cache fail with %v", err)
 		return
 	}
-	c.log("Cache expire remote cahe by keys(%v) success with %v", keys, res)
+	for i := 1; i < len(res); i += 2 {
+		ver, _ := redis.Int64(res[i], nil)
+		vers = append(vers, ver)
+	}
+	c.log("Cache expire remote cache by keys(%v) success with version(%v)", keys, vers)
 	return
 }
 
@@ -273,8 +277,13 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 		return
 	}
 	if remoteCacheWatch != remoteNewWatch { //watch change.
+		vers, xerr := c.Expire(key) //expire the key and get the new cache version
+		if xerr != nil {
+			err = xerr
+			return
+		}
+		remoteCachVer = vers[0]
 		err = ErrNoFound
-		c.Expire(key)
 		return
 	}
 	c.cacheLck.Lock()
@@ -321,12 +330,8 @@ func (c *Cache) WillModify(key string, call func() error, notify ...string) (err
 
 //WillQuery impl query and update cache by redis sequece.
 func (c *Cache) WillQuery(key string, val interface{}, call func() (val interface{}, err error), watch ...string) (err error) {
-	_, _, err = c.Try(key, val, watch...)
+	remoteCachVer, remoteNewWatch, err := c.Try(key, val, watch...)
 	if err != ErrNoFound {
-		return
-	}
-	remoteCachVer, _, remoteNewWatch, err := c.WatchVersion(key, watch...)
-	if err != nil {
 		return
 	}
 	newval, err := call()
