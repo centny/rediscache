@@ -6,18 +6,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/garyburd/redigo/redis"
 )
 
 func init() {
-	pool := redis.NewPool(func() (conn redis.Conn, err error) {
-		conn, err = redis.Dial("tcp", "loc.m:6379")
-		return
-	}, 100)
-	pool.MaxActive = 200
-	pool.Wait = true
-	C = pool.Get
+	InitRedisPool("loc.m:6379")
 	C().Do("del", "res-ver", "res-size", "res-val")
 }
 
@@ -48,6 +40,7 @@ func (c *cacheTest) doAdd(key string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	c.alck.Unlock()
+
 	//
 	// fmt.Printf("start expired->key:%v,ver:%v\n", key, ver)
 	err := c.cache.Expire("res", ver)
@@ -63,7 +56,7 @@ func (c *cacheTest) list(u string) (xval interface{}, res map[string]bool) {
 	if err == nil {
 		return
 	}
-	if err != NoFound {
+	if err != ErrNoFound {
 		panic(err)
 	}
 	//

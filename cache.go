@@ -1,3 +1,7 @@
+/*
+Package rediscache imple the normal Try/Update/Expire cache.
+it will using cache by local and remote pool.
+*/
 package rediscache
 
 import (
@@ -11,8 +15,10 @@ import (
 	"github.com/garyburd/redigo/redis"
 )
 
-var NoFound = fmt.Errorf("cache not found")
+//ErrNoFound is const define for cache not found error.
+var ErrNoFound = fmt.Errorf("cache not found")
 
+//Item is cache item.
 type Item struct {
 	Key  string
 	Ver  int64
@@ -20,14 +26,17 @@ type Item struct {
 	Last int64
 }
 
+//Size will return the memory size of cache used.
 func (i *Item) Size() uint64 {
 	return uint64(len(i.Data)+len(i.Key)) + 64
 }
 
+//Unmarshal will unmarshal the []byte data to struct by json.Unmarshal
 func (i *Item) Unmarshal(v interface{}) error {
 	return json.Unmarshal(i.Data, v)
 }
 
+//Cache is the cache pool
 type Cache struct {
 	MemLimit    uint64
 	Disable     bool
@@ -40,6 +49,7 @@ type Cache struct {
 	ShowLog     bool
 }
 
+//NewCache is the creator to create one cache pool by local memory max limit.
 func NewCache(memLimit uint64) *Cache {
 	return &Cache{
 		cache:  list.New(),
@@ -47,6 +57,9 @@ func NewCache(memLimit uint64) *Cache {
 	}
 }
 
+//Update the cahce by key/ver and data.
+//it will marshal the val to []byte by json.Marshal.
+//return nil when all is done well, or return fail message.
 func (c *Cache) Update(key string, ver int64, val interface{}) (err error) {
 	if c.Disable {
 		return
@@ -66,6 +79,8 @@ func (c *Cache) Update(key string, ver int64, val interface{}) (err error) {
 	return
 }
 
+//Expire the cache by key and version.
+//return nil when the local and remote cache is updated, or return fail message.
 func (c *Cache) Expire(key string, ver int64) (err error) {
 	if c.Disable {
 		return
@@ -75,6 +90,7 @@ func (c *Cache) Expire(key string, ver int64) (err error) {
 	return
 }
 
+//update remote cache pool
 func (c *Cache) remoteUpdate(key string, ver int64, data []byte) (err error) {
 	conn := C()
 	defer conn.Close()
@@ -89,6 +105,7 @@ func (c *Cache) remoteUpdate(key string, ver int64, data []byte) (err error) {
 	return
 }
 
+//remote cache from local cache pool
 func (c *Cache) removeLocal(key string) {
 	c.cacheLck.Lock()
 	if element, ok := c.mcache[key]; ok {
@@ -98,6 +115,7 @@ func (c *Cache) removeLocal(key string) {
 	c.cacheLck.Unlock()
 }
 
+// add data to local cache pool
 func (c *Cache) addLocal(key string, ver int64, data []byte) (newItem *Item) {
 	c.cacheLck.Lock()
 	defer c.cacheLck.Unlock()
@@ -123,9 +141,12 @@ func (c *Cache) addLocal(key string, ver int64, data []byte) (newItem *Item) {
 	return
 }
 
+//Try get the data from cache.
+//it will try find cache on local memory, if cache not found try remote.
+//return NotFound when cache not exist, return nil when the cache hited, or return fail error.
 func (c *Cache) Try(key string, val interface{}) (err error) {
 	if c.Disable {
-		err = NoFound
+		err = ErrNoFound
 		return
 	}
 	c.cacheLck.Lock()
@@ -145,7 +166,7 @@ func (c *Cache) Try(key string, val interface{}) (err error) {
 			//remote version not found, but local found
 			//remove local and return not found
 			c.removeLocal(key)
-			err = NoFound
+			err = ErrNoFound
 			c.log("Cache local cache foud by key(%v), but remote cache is empty, will clear local", key)
 			return
 		} else if execErr != nil {
@@ -158,7 +179,7 @@ func (c *Cache) Try(key string, val interface{}) (err error) {
 			//remote version not found, but local found
 			//remove local and return not found
 			c.removeLocal(key)
-			err = NoFound
+			err = ErrNoFound
 			c.log("Cache local cache foud by key(%v), but remote version is empty, will clear local", key)
 			return
 		} else if execErr != nil {
@@ -170,7 +191,7 @@ func (c *Cache) Try(key string, val interface{}) (err error) {
 		item := element.Value.(*Item)
 		if item.Ver == remoteVer { //cache hited
 			atomic.AddUint64(&c.LocalHited, 1)
-			c.log("Cache local cache hited by key(%v),ver(%v)", key, item.Ver)
+			c.log("Cache local cache hited(%v) by key(%v),ver(%v)", c.LocalHited, key, item.Ver)
 			err = item.Unmarshal(val)
 			return
 		}
@@ -185,25 +206,25 @@ func (c *Cache) Try(key string, val interface{}) (err error) {
 	}
 	ver, execErr := redis.Int64(res[0], nil)
 	if execErr != nil || ver < 1 {
-		//remove version not found
-		err = NoFound
+		//remote version not found
+		err = ErrNoFound
 		return
 	}
 	size, execErr := redis.Int64(res[1], nil)
 	if execErr != nil || size < 1 {
-		//remove version not found
-		err = NoFound
+		//remote version not found
+		err = ErrNoFound
 		return
 	}
 	data, execErr := redis.Bytes(res[2], nil)
 	if execErr != nil {
-		//remove data not found
-		err = NoFound
+		//remote data not found
+		err = ErrNoFound
 		return
 	}
 	item := c.addLocal(key, ver, data)
 	atomic.AddUint64(&c.RemoteHited, 1)
-	c.log("Cache remote cache hited by key(%v),ver(%v)", key, item.Ver)
+	c.log("Cache remote cache hited(%v) by key(%v),ver(%v)", c.RemoteHited, key, item.Ver)
 	err = item.Unmarshal(val)
 	return
 }
