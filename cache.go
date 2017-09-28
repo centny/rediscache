@@ -8,6 +8,7 @@ import (
 	"container/list"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 
@@ -57,6 +58,20 @@ func NewCache(memLimit uint64) *Cache {
 	}
 }
 
+//Version will return the cache version by key.
+func (c *Cache) Version(key string) (ver int64, err error) {
+	if c.Disable {
+		return
+	}
+	conn := C()
+	defer conn.Close()
+	ver, err = redis.Int64(conn.Do("GET", key+"-ver"))
+	if err == redis.ErrNil {
+		ver, err = 0, nil
+	}
+	return
+}
+
 //Update the cahce by key/ver and data.
 //it will marshal the val to []byte by json.Marshal.
 //return nil when all is done well, or return fail message.
@@ -81,12 +96,12 @@ func (c *Cache) Update(key string, ver int64, val interface{}) (err error) {
 
 //Expire the cache by key and version.
 //return nil when the local and remote cache is updated, or return fail message.
-func (c *Cache) Expire(key string, ver int64) (err error) {
+func (c *Cache) Expire(key string) (err error) {
 	if c.Disable {
 		return
 	}
 	c.removeLocal(key)
-	err = c.remoteUpdate(key, ver, []byte(""))
+	err = c.expireRemote(key)
 	return
 }
 
@@ -95,13 +110,28 @@ func (c *Cache) remoteUpdate(key string, ver int64, data []byte) (err error) {
 	conn := C()
 	defer conn.Close()
 	res, err := conn.Do("eval",
-		`local oldVer=redis.call('get',KEYS[1]);if(oldVer and tonumber(oldVer)>tonumber(ARGV[1]))then return redis.status_reply("IGNORE"); else return redis.call('mset',KEYS[1],ARGV[1],KEYS[2],ARGV[2],KEYS[3],ARGV[3]);end`,
-		3, key+"-ver", key+"-val", key+"-size", ver, data, len(data))
+		`local oldVer=redis.call('get',KEYS[1]);if(oldVer and tonumber(oldVer)>tonumber(ARGV[1]))then return redis.status_reply("IGNORE"); else return redis.call('mset',KEYS[1],ARGV[1],KEYS[2],ARGV[2]);end`,
+		2, key+"-ver", key+"-val", ver, data)
 	if err != nil {
 		log.E("Cache-Update remote update cache fail with %v", err)
 		return
 	}
 	c.log("Cache update remote cache by key(%v),ver(%v),size(%v) success with %v", key, ver, len(data), res)
+	return
+}
+
+func (c *Cache) expireRemote(key string) (err error) {
+	conn := C()
+	defer conn.Close()
+	conn.Send("MULTI")
+	conn.Send("MSET", key+"-val", []byte(""))
+	conn.Send("INCR", key+"-ver")
+	res, err := conn.Do("EXEC")
+	if err != nil {
+		log.E("Cache expire remote cache fail with %v", err)
+		return
+	}
+	c.log("Cache expire remote cahe by key(%v) success with %v", key, res)
 	return
 }
 
@@ -155,39 +185,12 @@ func (c *Cache) Try(key string, val interface{}) (err error) {
 	conn := C()
 	defer conn.Close()
 	if ok {
-		res, execErr := redis.Values(conn.Do("MGET", key+"-ver", key+"-size"))
+		remoteVer, execErr := c.Version(key)
 		if execErr != nil {
-			err = execErr
-			log.E("Cache try get the data verison and size by key(%v) fail with %v", key, err)
-			return
-		}
-		remoteSize, execErr := redis.Int64(res[1], nil)
-		if execErr == redis.ErrNil || remoteSize < 1 {
-			//remote version not found, but local found
-			//remove local and return not found
-			c.removeLocal(key)
-			err = ErrNoFound
-			c.log("Cache local cache foud by key(%v), but remote cache is empty, will clear local", key)
-			return
-		} else if execErr != nil {
-			err = execErr
-			log.E("Cache try get the data size by key(%v) fail with %v", key, err)
-			return
-		}
-		remoteVer, execErr := redis.Int64(res[0], nil)
-		if execErr == redis.ErrNil {
-			//remote version not found, but local found
-			//remove local and return not found
-			c.removeLocal(key)
-			err = ErrNoFound
-			c.log("Cache local cache foud by key(%v), but remote version is empty, will clear local", key)
-			return
-		} else if execErr != nil {
 			err = execErr
 			log.E("Cache try get the data verison by key(%v) fail with %v", key, err)
 			return
 		}
-
 		item := element.Value.(*Item)
 		if item.Ver == remoteVer { //cache hited
 			atomic.AddUint64(&c.LocalHited, 1)
@@ -198,7 +201,7 @@ func (c *Cache) Try(key string, val interface{}) (err error) {
 		//local cache is expired.
 		c.removeLocal(key)
 	}
-	res, execErr := redis.Values(conn.Do("MGET", key+"-ver", key+"-size", key+"-val"))
+	res, execErr := redis.Values(conn.Do("MGET", key+"-ver", key+"-val"))
 	if execErr != nil {
 		err = execErr
 		log.E("Cache try get the data and version by key(%v) fail with %v", key, err)
@@ -210,14 +213,8 @@ func (c *Cache) Try(key string, val interface{}) (err error) {
 		err = ErrNoFound
 		return
 	}
-	size, execErr := redis.Int64(res[1], nil)
-	if execErr != nil || size < 1 {
-		//remote version not found
-		err = ErrNoFound
-		return
-	}
-	data, execErr := redis.Bytes(res[2], nil)
-	if execErr != nil {
+	data, execErr := redis.Bytes(res[1], nil)
+	if execErr != nil || len(data) < 1 {
 		//remote data not found
 		err = ErrNoFound
 		return
@@ -233,4 +230,31 @@ func (c *Cache) log(format string, args ...interface{}) {
 	if c.ShowLog {
 		log.D_(1, format, args...)
 	}
+}
+
+//WillModify impl modify and expire cache by redis sequece
+func (c *Cache) WillModify(key string, call func() error) (err error) {
+	err = call()
+	c.Expire(key)
+	return
+}
+
+//WillQuery impl query and update cache by redis sequece.
+func (c *Cache) WillQuery(key string, val interface{}, call func() (val interface{}, err error)) (err error) {
+	err = c.Try(key, val)
+	if err != ErrNoFound {
+		return
+	}
+	ver, err := c.Version(key)
+	if err != nil {
+		log.E("Cache get version by key(%v) fail with %v", key, err)
+		return
+	}
+	newval, err := call()
+	if err != nil {
+		return
+	}
+	reflect.Indirect(reflect.ValueOf(val)).Set(reflect.ValueOf(newval))
+	c.Update(key, ver, newval)
+	return
 }
