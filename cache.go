@@ -181,12 +181,55 @@ func (c *Cache) update(key string, ver int64, wver string, val interface{}) (err
 //return nil when the local and remote cache is updated, or return fail message.
 func (c *Cache) Expire(keys ...string) (vers []int64, err error) {
 	if c.Disable {
+		for range keys {
+			vers = append(vers, 0)
+		}
 		return
 	}
 	for _, key := range keys {
 		c.removeLocal(key)
 	}
 	vers, err = c.expireRemote(keys...)
+	return
+}
+
+func (c *Cache) ExpirePrefix(base []string, prefix string, keys ...string) (vers []int64, err error) {
+	if c.Disable {
+		for range base {
+			vers = append(vers, 0)
+		}
+		for range keys {
+			vers = append(vers, 0)
+		}
+		return
+	}
+	allkeys := base
+	for _, key := range keys {
+		allkeys = append(allkeys, prefix+key)
+	}
+	vers, err = c.Expire(allkeys...)
+	return
+}
+
+func (c *Cache) ExpireMultiPrefix(base []string, prefix []string, keys ...string) (vers []int64, err error) {
+	if c.Disable {
+		for range base {
+			vers = append(vers, 0)
+		}
+		for range prefix {
+			for range keys {
+				vers = append(vers, 0)
+			}
+		}
+		return
+	}
+	allkeys := base
+	for _, pre := range prefix {
+		for _, key := range keys {
+			allkeys = append(allkeys, pre+key)
+		}
+	}
+	vers, err = c.Expire(allkeys...)
 	return
 }
 
@@ -277,6 +320,7 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 		return
 	}
 	if remoteCacheWatch != remoteNewWatch { //watch change.
+		c.log("Cache the key(%v) cache is expired by watch expired", key)
 		vers, xerr := c.Expire(key) //expire the key and get the new cache version
 		if xerr != nil {
 			err = xerr
