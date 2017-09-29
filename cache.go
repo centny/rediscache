@@ -99,9 +99,10 @@ type Cache struct {
 //NewCache is the creator to create one cache pool by local memory max limit.
 func NewCache(memLimit uint64) *Cache {
 	return &Cache{
-		cache:  list.New(),
-		mcache: map[string]*list.Element{},
-		hited:  map[string]uint64{},
+		MemLimit: memLimit,
+		cache:    list.New(),
+		mcache:   map[string]*list.Element{},
+		hited:    map[string]uint64{},
 	}
 }
 
@@ -303,6 +304,8 @@ func (c *Cache) removeLocal(key string) {
 	if element, ok := c.mcache[key]; ok {
 		c.cache.Remove(element)
 		delete(c.mcache, element.Value.(*Item).Key)
+		old := element.Value.(*Item)
+		c.size -= old.Size()
 	}
 	c.cacheLck.Unlock()
 }
@@ -320,7 +323,7 @@ func (c *Cache) addLocal(key string, ver int64, wver string, data []byte) (newIt
 	}
 	newSize := newItem.Size()
 	for c.cache.Len() > 0 {
-		if c.size+newSize < c.MemLimit {
+		if c.MemLimit < 1 || c.size+newSize < c.MemLimit {
 			break
 		}
 		//remove old one

@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Centny/gwf/util"
 )
 
 func init() {
@@ -124,6 +126,7 @@ func TestCache(t *testing.T) {
 		t.Error("error")
 		return
 	}
+	fmt.Println(ctest.cache.size)
 }
 
 func BenchmarkDisable(b *testing.B) {
@@ -197,4 +200,6 @@ func BenchmarkEnable(b *testing.B) {
 			// fmt.Println("done->", idx, atomic.AddInt64(&running, -1), ctest.adding, ctest.listing)
 		}
 	})
+	state, _ := ctest.cache.State()
+	fmt.Println("don with size:", util.S2Json(state))
 }
