@@ -91,6 +91,8 @@ type Cache struct {
 	cacheLck    sync.RWMutex
 	LocalHited  uint64
 	RemoteHited uint64
+	hited       map[string]uint64
+	hitedLck    sync.RWMutex
 	ShowLog     bool
 }
 
@@ -99,6 +101,7 @@ func NewCache(memLimit uint64) *Cache {
 	return &Cache{
 		cache:  list.New(),
 		mcache: map[string]*list.Element{},
+		hited:  map[string]uint64{},
 	}
 }
 
@@ -357,6 +360,9 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 		item := element.Value.(*Item)
 		if item.Ver == remoteCachVer && item.Watch == remoteCacheWatch { //cache hited
 			atomic.AddUint64(&c.LocalHited, 1)
+			c.hitedLck.Lock()
+			c.hited[key]++
+			c.hitedLck.Unlock()
 			c.log("Cache local cache hited(%v) by key(%v),ver(%v)", c.LocalHited, key, item.Ver)
 			err = item.Unmarshal(val)
 			return
@@ -372,6 +378,9 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 	atomic.AddUint64(&c.RemoteHited, 1)
 	c.log("Cache remote cache hited(%v) by key(%v),ver(%v)", c.RemoteHited, key, item.Ver)
 	err = item.Unmarshal(val)
+	c.hitedLck.Lock()
+	c.hited[key]++
+	c.hitedLck.Unlock()
 	return
 }
 
