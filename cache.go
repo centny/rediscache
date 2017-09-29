@@ -306,6 +306,7 @@ func (c *Cache) removeLocal(key string) {
 		delete(c.mcache, element.Value.(*Item).Key)
 		old := element.Value.(*Item)
 		c.size -= old.Size()
+		c.log("Cache remove local cache(%v),size(%v), current used(%v)", old.Key, old.Size(), c.size)
 	}
 	c.cacheLck.Unlock()
 }
@@ -332,9 +333,11 @@ func (c *Cache) addLocal(key string, ver int64, wver string, data []byte) (newIt
 		old := element.Value.(*Item)
 		delete(c.mcache, old.Key)
 		c.size -= old.Size()
+		c.log("Cache remove local cache(%v),size(%v), current used(%v)", old.Key, old.Size(), c.size)
 	}
 	c.size += newSize
 	c.mcache[key] = c.cache.PushFront(newItem)
+	c.log("Cache add local cache(%v),size(%v), current used(%v)", newItem.Key, newSize, c.size)
 	return
 }
 
