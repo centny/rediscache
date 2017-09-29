@@ -102,6 +102,24 @@ func NewCache(memLimit uint64) *Cache {
 	}
 }
 
+func (c *Cache) State() (val interface{}, err error) {
+	cached := util.Map{}
+	c.cacheLck.Lock()
+	for key, cache := range c.mcache {
+		cached[key] = cache.Value.(*Item).Size()
+	}
+	c.cacheLck.Unlock()
+	val = util.Map{
+		"max":          c.MemLimit,
+		"disable":      c.Disable,
+		"used":         c.size,
+		"local_hited":  c.LocalHited,
+		"remote_hited": c.RemoteHited,
+		"cached":       cached,
+	}
+	return
+}
+
 //Version will return the cache version by key.
 func (c *Cache) Version(keys ...string) (ver []int64, err error) {
 	if c.Disable {
