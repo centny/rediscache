@@ -63,6 +63,15 @@ func WatchKeys(key string, watch ...string) (keys []interface{}) {
 	return
 }
 
+func KeyPrefix(key string) string {
+	idx := strings.LastIndex(key, "-")
+	if idx < 0 {
+		return key
+	} else {
+		return key[:idx]
+	}
+}
+
 //Item is cache item.
 type Item struct {
 	Key   string
@@ -378,7 +387,7 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 		if item.Ver == remoteCachVer && item.Watch == remoteCacheWatch { //cache hited
 			atomic.AddUint64(&c.LocalHited, 1)
 			c.hitedLck.Lock()
-			c.hited[strings.SplitAfterN(key, "-", 2)[0]]++
+			c.hited[KeyPrefix(key)]++
 			c.hitedLck.Unlock()
 			c.log("Cache local cache hited(%v) by key(%v),ver(%v)", c.LocalHited, key, item.Ver)
 			err = item.Unmarshal(val)
@@ -396,7 +405,7 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 	c.log("Cache remote cache hited(%v) by key(%v),ver(%v)", c.RemoteHited, key, item.Ver)
 	err = item.Unmarshal(val)
 	c.hitedLck.Lock()
-	c.hited[strings.SplitAfterN(key, "-", 2)[0]]++
+	c.hited[KeyPrefix(key)]++
 	c.hitedLck.Unlock()
 	return
 }
