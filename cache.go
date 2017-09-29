@@ -107,11 +107,17 @@ func NewCache(memLimit uint64) *Cache {
 
 func (c *Cache) State() (val interface{}, err error) {
 	cached := util.Map{}
+	hited := map[string]uint64{}
 	c.cacheLck.Lock()
 	for key, cache := range c.mcache {
 		cached[key] = cache.Value.(*Item).Size()
 	}
 	c.cacheLck.Unlock()
+	c.hitedLck.Lock()
+	for key, h := range c.hited {
+		hited[key] = h
+	}
+	c.hitedLck.Unlock()
 	val = util.Map{
 		"max":          c.MemLimit,
 		"disable":      c.Disable,
@@ -119,6 +125,7 @@ func (c *Cache) State() (val interface{}, err error) {
 		"local_hited":  c.LocalHited,
 		"remote_hited": c.RemoteHited,
 		"cached":       cached,
+		"hited":        hited,
 	}
 	return
 }
