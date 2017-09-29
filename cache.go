@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -107,11 +108,12 @@ func NewCache(memLimit uint64) *Cache {
 }
 
 func (c *Cache) State() (val interface{}, err error) {
-	cached := util.Map{}
+	cached := map[string]uint64{}
 	hited := map[string]uint64{}
 	c.cacheLck.Lock()
 	for key, cache := range c.mcache {
-		cached[key] = cache.Value.(*Item).Size()
+		prefix := strings.SplitAfterN(key, "-", 2)[0]
+		cached[prefix] += cache.Value.(*Item).Size()
 	}
 	c.cacheLck.Unlock()
 	c.hitedLck.Lock()
@@ -376,7 +378,7 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 		if item.Ver == remoteCachVer && item.Watch == remoteCacheWatch { //cache hited
 			atomic.AddUint64(&c.LocalHited, 1)
 			c.hitedLck.Lock()
-			c.hited[key]++
+			c.hited[strings.SplitAfterN(key, "-", 2)[0]]++
 			c.hitedLck.Unlock()
 			c.log("Cache local cache hited(%v) by key(%v),ver(%v)", c.LocalHited, key, item.Ver)
 			err = item.Unmarshal(val)
@@ -394,7 +396,7 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 	c.log("Cache remote cache hited(%v) by key(%v),ver(%v)", c.RemoteHited, key, item.Ver)
 	err = item.Unmarshal(val)
 	c.hitedLck.Lock()
-	c.hited[key]++
+	c.hited[strings.SplitAfterN(key, "-", 2)[0]]++
 	c.hitedLck.Unlock()
 	return
 }
