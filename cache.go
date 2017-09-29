@@ -127,6 +127,7 @@ func (c *Cache) State() (val interface{}, err error) {
 		"remote_hited": c.RemoteHited,
 		"cached":       cached,
 		"hited":        hited,
+		"showlog":      c.ShowLog,
 	}
 	return
 }
