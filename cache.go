@@ -330,6 +330,7 @@ func (c *Cache) addLocal(key string, ver int64, wver string, data []byte) (newIt
 		delete(c.mcache, old.Key)
 		c.size -= old.Size()
 	}
+	c.size += newSize
 	c.mcache[key] = c.cache.PushFront(newItem)
 	return
 }
