@@ -121,8 +121,7 @@ func (c *Cache) State() (val interface{}, err error) {
 	hited := map[string]uint64{}
 	c.cacheLck.Lock()
 	for key, cache := range c.mcache {
-		prefix := strings.SplitAfterN(key, "-", 2)[0]
-		cached[prefix] += cache.Value.(*Item).Size()
+		cached[KeyPrefix(key)] += cache.Value.(*Item).Size()
 	}
 	c.cacheLck.Unlock()
 	c.hitedLck.Lock()
