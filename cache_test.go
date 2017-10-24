@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	InitRedisPool("loc.m:6379")
+	InitRedisPool("loc.m:6379?db=1")
 	for _, key := range []string{"cres", "cres1"} {
 		C().Do("del", key+"-ver", key+"-size", key+"-val")
 	}
