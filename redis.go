@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/garyburd/redigo/redis"
+	"github.com/gomodule/redigo/redis"
 )
 
 //C is the redis connection getter

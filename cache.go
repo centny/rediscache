@@ -16,7 +16,7 @@ import (
 	"github.com/Centny/gwf/util"
 
 	"github.com/Centny/gwf/log"
-	"github.com/garyburd/redigo/redis"
+	"github.com/gomodule/redigo/redis"
 )
 
 //ErrNoFound is const define for cache not found error.
