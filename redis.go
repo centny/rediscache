@@ -122,3 +122,31 @@ func (p *poolConn) IsGood() (ok bool) {
 	ok = p.Conn.Err() == nil
 	return
 }
+
+func (p *poolConn) Do(commandName string, args ...interface{}) (reply interface{}, err error) {
+	if err := mockerCheck("Conn.Do"); err != nil {
+		return nil, err
+	}
+	return p.Conn.Do(commandName, args...)
+}
+
+func (p *poolConn) Send(commandName string, args ...interface{}) error {
+	if err := mockerCheck("Conn.Send"); err != nil {
+		return err
+	}
+	return p.Conn.Send(commandName, args...)
+}
+
+func (p *poolConn) Flush() error {
+	if err := mockerCheck("Conn.Flush"); err != nil {
+		return err
+	}
+	return p.Conn.Flush()
+}
+
+func (p *poolConn) Receive() (reply interface{}, err error) {
+	if err := mockerCheck("Conn.Receive"); err != nil {
+		return nil, err
+	}
+	return p.Conn.Receive()
+}
