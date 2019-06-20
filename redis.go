@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Centny/gwf/log"
+	"github.com/Centny/gwf/util"
 	"github.com/gomodule/redigo/redis"
 )
 
@@ -19,7 +21,7 @@ func Now() int64 {
 }
 
 //Pool is the redis pool.
-var Pool *redis.Pool
+var Pool *ConnPool
 
 //InitRedisPool will initial the redis pool by uri.
 func InitRedisPool(uri string) {
@@ -40,11 +42,83 @@ func InitRedisPool(uri string) {
 		}
 	}
 	// fmt.Println(uri, options)
-	Pool = redis.NewPool(func() (conn redis.Conn, err error) {
+	Pool = NewConnPool(100, func() (conn redis.Conn, err error) {
 		conn, err = redis.Dial("tcp", parts[0], options...)
 		return
-	}, 100)
-	Pool.MaxActive = 200
-	Pool.Wait = true
+	})
+	// Pool.MaxActive = 200
+	// Pool.Wait = true
 	C = Pool.Get
+}
+
+type ConnPool struct {
+	connQueue chan *poolConn
+	maxQueue  chan int
+	Max       int
+	Newer     func() (conn redis.Conn, err error)
+}
+
+func NewConnPool(max int, newer func() (conn redis.Conn, err error)) (pool *ConnPool) {
+	pool = &ConnPool{
+		connQueue: make(chan *poolConn, max),
+		maxQueue:  make(chan int, max),
+		Max:       max,
+		Newer:     newer,
+	}
+	for i := 0; i < max; i++ {
+		pool.maxQueue <- 1
+	}
+	return
+}
+
+func (c *ConnPool) Get() (conn redis.Conn) {
+	for {
+		var pc *poolConn
+		select {
+		case pc = <-c.connQueue:
+			if !pc.IsGood() {
+				pc = nil
+			}
+		case <-c.maxQueue:
+			raw, err := c.Newer()
+			if err != nil {
+				log.W("ConnPool new connection fail with %v", err)
+			} else {
+				pc = &poolConn{Conn: raw, pool: c}
+			}
+		}
+		if pc != nil {
+			conn = pc
+			break
+		}
+	}
+	return
+}
+
+type poolConn struct {
+	redis.Conn
+	pool *ConnPool
+	last int64
+}
+
+// Close closes the connection.
+func (p *poolConn) Close() (err error) {
+	okErr := p.Conn.Err()
+	if okErr != nil {
+		p.Conn.Close()
+		p.pool.maxQueue <- 1
+	} else {
+		p.pool.connQueue <- p
+	}
+	return
+}
+
+func (p *poolConn) IsGood() (ok bool) {
+	now := util.Now()
+	if now-p.last > 3000 {
+		p.Conn.Do("ping")
+		p.last = now
+	}
+	ok = p.Conn.Err() == nil
+	return
 }
