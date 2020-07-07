@@ -6,8 +6,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/Centny/gwf/util"
 )
 
 func init() {
@@ -201,5 +199,5 @@ func BenchmarkEnable(b *testing.B) {
 		}
 	})
 	state, _ := ctest.cache.State()
-	fmt.Println("don with size:", util.S2Json(state))
+	fmt.Println("don with size:", state)
 }

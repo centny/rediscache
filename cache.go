@@ -8,14 +8,12 @@ import (
 	"container/list"
 	"encoding/json"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/Centny/gwf/util"
-
-	"github.com/Centny/gwf/log"
 	"github.com/gomodule/redigo/redis"
 )
 
@@ -50,9 +48,25 @@ func WatchVersion(allver []interface{}, xerr error) (ver int64, cacheWatch, remo
 		}
 	}
 	if len(allver) > 1 {
-		remoteWatch = util.Join(allver[2:], ",")
+		remoteWatch = Join(allver[2:], ",")
 	}
 	return
+}
+
+func Join(v interface{}, seq string) string {
+	vtype := reflect.TypeOf(v)
+	if vtype.Kind() != reflect.Slice {
+		return ""
+	}
+	vval := reflect.ValueOf(v)
+	if vval.Len() < 1 {
+		return ""
+	}
+	val := fmt.Sprintf("%v", reflect.Indirect(vval.Index(0)).Interface())
+	for i := 1; i < vval.Len(); i++ {
+		val += fmt.Sprintf("%v%v", seq, reflect.Indirect(vval.Index(i)).Interface())
+	}
+	return val
 }
 
 func WatchKeys(key string, watch ...string) (keys []interface{}) {
@@ -129,7 +143,7 @@ func (c *Cache) State() (val interface{}, err error) {
 		hited[key] = h
 	}
 	c.hitedLck.Unlock()
-	val = util.Map{
+	val = map[string]interface{}{
 		"max":          c.MemLimit,
 		"disable":      c.Disable,
 		"used":         c.size,
@@ -204,7 +218,7 @@ func (c *Cache) update(key string, ver int64, wver string, val interface{}) (err
 	}
 	data, err := json.Marshal(val)
 	if err != nil {
-		log.E("Cache-Update marshal fail with %v", err)
+		log.Printf("[Error]Cache-Update marshal fail with %v", err)
 		return
 	}
 	if len(data) < 1 {
@@ -281,7 +295,7 @@ func (c *Cache) remoteUpdate(key string, ver int64, wver string, data []byte) (e
 		`local oldVer=redis.call('get',KEYS[1]);if(oldVer and tonumber(oldVer)>tonumber(ARGV[1]))then return redis.status_reply("IGNORE"); else return redis.call('mset',KEYS[1],ARGV[1],KEYS[2],ARGV[2],KEYS[3],ARGV[3]);end`,
 		3, key+"-ver", key+"-val", key+"-watch", ver, data, wver)
 	if err != nil {
-		log.E("Cache-Update remote update cache fail with %v", err)
+		log.Printf("[Error]Cache-Update remote update cache fail with %v", err)
 		return
 	}
 	c.log("Cache update remote cache by key(%v),ver(%v),size(%v) success with %v", key, ver, len(data), res)
@@ -298,7 +312,7 @@ func (c *Cache) expireRemote(keys ...string) (vers []int64, err error) {
 	}
 	res, err := redis.Values(conn.Do("EXEC"))
 	if err != nil {
-		log.E("Cache expire remote cache fail with %v", err)
+		log.Printf("[Error]Cache expire remote cache fail with %v", err)
 		return
 	}
 	for i := 1; i < len(res); i += 2 {
@@ -362,7 +376,7 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 	}
 	remoteCachVer, remoteCacheWatch, remoteNewWatch, err := c.WatchVersion(key, watch...)
 	if err != nil {
-		log.E("Cache try get the data verison by key(%v) fail with %v", key, err)
+		log.Printf("[Error]Cache try get the data verison by key(%v) fail with %v", key, err)
 		return
 	}
 	if remoteCacheWatch != remoteNewWatch { //watch change.
@@ -411,7 +425,7 @@ func (c *Cache) Try(key string, val interface{}, watch ...string) (remoteCachVer
 
 func (c *Cache) log(format string, args ...interface{}) {
 	if c.ShowLog {
-		log.D_(1, format, args...)
+		log.Output(1, fmt.Sprintf(format, args...))
 	}
 }
 

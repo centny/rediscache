@@ -1,12 +1,11 @@
 package rediscache
 
 import (
+	"log"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Centny/gwf/log"
-	"github.com/Centny/gwf/util"
 	"github.com/gomodule/redigo/redis"
 )
 
@@ -82,7 +81,7 @@ func (c *ConnPool) Get() (conn redis.Conn) {
 		case <-c.maxQueue:
 			raw, err := c.Newer()
 			if err != nil {
-				log.W("ConnPool new connection fail with %v", err)
+				log.Printf("[Warn]ConnPool new connection fail with %v", err)
 			} else {
 				pc = &poolConn{Conn: raw, pool: c}
 			}
@@ -114,7 +113,7 @@ func (p *poolConn) Close() (err error) {
 }
 
 func (p *poolConn) IsGood() (ok bool) {
-	now := util.Now()
+	now := time.Now().Local().UnixNano() / 1e6
 	if now-p.last > 3000 {
 		p.Conn.Do("ping")
 		p.last = now
