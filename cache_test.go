@@ -9,21 +9,17 @@ import (
 )
 
 func init() {
-	InitRedisPool("localhost:6379?db=1")
+	InitRedisPool("redis.loc:6379?db=1")
 	for _, key := range []string{"cres", "cres1"} {
 		C().Do("del", key+"-ver", key+"-size", key+"-val")
 	}
 }
 
 type cacheTest struct {
-	added         map[string]bool
-	alck          sync.RWMutex
-	cache         *Cache
-	wait          bool
-	adding        int64
-	listing       int64
-	listing2      int64
-	add2c, list2c int64
+	added map[string]bool
+	alck  sync.RWMutex
+	cache *Cache
+	wait  bool
 }
 
 func newCacheTest() *cacheTest {

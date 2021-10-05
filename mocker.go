@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-var MockError = fmt.Errorf("mock error")
+var ErrMock = fmt.Errorf("mock error")
 
 var mocking = false
 var mockTrigger = map[string]int64{}
@@ -17,7 +17,7 @@ func mockerCheck(key string) (err error) {
 		mockRunnedLck.Lock()
 		mockRunned[key]++
 		if mockTrigger[key] < 0 || mockTrigger[key] == mockRunned[key] {
-			err = MockError
+			err = ErrMock
 		}
 		mockRunnedLck.Unlock()
 	}

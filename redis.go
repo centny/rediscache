@@ -24,27 +24,7 @@ var Pool *ConnPool
 
 //InitRedisPool will initial the redis pool by uri.
 func InitRedisPool(uri string) {
-	var options []redis.DialOption
-	parts := strings.SplitN(uri, "?", 2)
-	if len(parts) > 1 {
-		args := strings.Split(parts[1], "&")
-		for _, arg := range args {
-			if strings.HasPrefix(arg, "db=") {
-				db, err := strconv.Atoi(strings.TrimPrefix(arg, "db="))
-				if err != nil {
-					panic(err)
-				}
-				options = append(options, redis.DialDatabase(db))
-			} else if strings.HasPrefix(arg, "password=") {
-				options = append(options, redis.DialPassword(strings.TrimPrefix(arg, "password=")))
-			}
-		}
-	}
-	// fmt.Println(uri, options)
-	Pool = NewConnPool(100, func() (conn redis.Conn, err error) {
-		conn, err = redis.Dial("tcp", parts[0], options...)
-		return
-	})
+	Pool = NewConnPoolByURI(uri)
 	// Pool.MaxActive = 200
 	// Pool.Wait = true
 	C = Pool.Get
@@ -67,6 +47,30 @@ func NewConnPool(max int, newer func() (conn redis.Conn, err error)) (pool *Conn
 	for i := 0; i < max; i++ {
 		pool.maxQueue <- 1
 	}
+	return
+}
+
+func NewConnPoolByURI(uri string) (pool *ConnPool) {
+	var options []redis.DialOption
+	parts := strings.SplitN(uri, "?", 2)
+	if len(parts) > 1 {
+		args := strings.Split(parts[1], "&")
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "db=") {
+				db, err := strconv.Atoi(strings.TrimPrefix(arg, "db="))
+				if err != nil {
+					panic(err)
+				}
+				options = append(options, redis.DialDatabase(db))
+			} else if strings.HasPrefix(arg, "password=") {
+				options = append(options, redis.DialPassword(strings.TrimPrefix(arg, "password=")))
+			}
+		}
+	}
+	pool = NewConnPool(100, func() (conn redis.Conn, err error) {
+		conn, err = redis.Dial("tcp", parts[0], options...)
+		return
+	})
 	return
 }
 
