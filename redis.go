@@ -1,9 +1,11 @@
 package rediscache
 
 import (
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -33,6 +35,8 @@ func InitRedisPool(uri string) {
 type ConnPool struct {
 	connQueue chan *poolConn
 	maxQueue  chan int
+	connAll   map[string]*poolConn
+	connLock  sync.RWMutex
 	Max       int
 	Newer     func() (conn redis.Conn, err error)
 }
@@ -41,6 +45,8 @@ func NewConnPool(max int, newer func() (conn redis.Conn, err error)) (pool *Conn
 	pool = &ConnPool{
 		connQueue: make(chan *poolConn, max),
 		maxQueue:  make(chan int, max),
+		connAll:   map[string]*poolConn{},
+		connLock:  sync.RWMutex{},
 		Max:       max,
 		Newer:     newer,
 	}
@@ -88,6 +94,9 @@ func (c *ConnPool) Get() (conn redis.Conn) {
 				log.Printf("[Warn]ConnPool new connection fail with %v", err)
 			} else {
 				pc = &poolConn{Conn: raw, pool: c}
+				c.connLock.Lock()
+				c.connAll[fmt.Sprintf("%p", pc)] = pc
+				c.connLock.Unlock()
 			}
 		}
 		if pc != nil {
@@ -98,18 +107,45 @@ func (c *ConnPool) Get() (conn redis.Conn) {
 	return
 }
 
+func (c *ConnPool) Close() {
+	conns := []*poolConn{}
+	c.connLock.Lock()
+	for _, conn := range c.connAll {
+		conns = append(conns, conn)
+	}
+	c.connLock.Unlock()
+	for _, conn := range conns {
+		conn.close(true)
+	}
+}
+
 type poolConn struct {
 	redis.Conn
-	pool *ConnPool
-	last int64
+	pool   *ConnPool
+	last   int64
+	closed int
 }
 
 // Close closes the connection.
 func (p *poolConn) Close() (err error) {
+	err = p.close(false)
+	return
+}
+
+func (p *poolConn) close(force bool) (err error) {
 	okErr := p.Conn.Err()
-	if okErr != nil {
+	if okErr != nil || force {
 		p.Conn.Close()
-		p.pool.maxQueue <- 1
+		p.pool.connLock.Lock()
+		delete(p.pool.connAll, fmt.Sprintf("%p", p))
+		closed := p.closed
+		if closed < 1 {
+			p.closed = 1
+		}
+		p.pool.connLock.Unlock()
+		if closed < 1 {
+			p.pool.maxQueue <- 1
+		}
 	} else {
 		p.pool.connQueue <- p
 	}
