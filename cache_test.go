@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-func init() {
-	InitRedisPool("redis.loc:6379?db=1")
-	for _, key := range []string{"cres", "cres1"} {
-		C().Do("del", key+"-ver", key+"-size", key+"-val")
-	}
-}
+// func init() {
+// 	InitRedisPool("redis.loc:6379?db=1")
+// 	for _, key := range []string{"cres", "cres1"} {
+// 		C().Do("del", key+"-ver", key+"-size", key+"-val")
+// 	}
+// }
 
 type cacheTest struct {
 	added map[string]bool

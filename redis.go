@@ -1,8 +1,12 @@
 package rediscache
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,11 +29,12 @@ func Now() int64 {
 var Pool *ConnPool
 
 //InitRedisPool will initial the redis pool by uri.
-func InitRedisPool(uri string) {
-	Pool = NewConnPoolByURI(uri)
+func InitRedisPool(uri string) (err error) {
+	Pool, err = NewConnPoolByURI(uri)
 	// Pool.MaxActive = 200
 	// Pool.Wait = true
 	C = Pool.Get
+	return
 }
 
 type ConnPool struct {
@@ -56,25 +61,83 @@ func NewConnPool(max int, newer func() (conn redis.Conn, err error)) (pool *Conn
 	return
 }
 
-func NewConnPoolByURI(uri string) (pool *ConnPool) {
+func NewConnPoolByURI(uri string) (pool *ConnPool, err error) {
+	if !strings.HasPrefix(uri, "redis://") {
+		uri = "redis://" + uri
+	}
+	poolURI, err := url.Parse(uri)
+	if err != nil {
+		return
+	}
+	poolQuery := poolURI.Query()
 	var options []redis.DialOption
-	parts := strings.SplitN(uri, "?", 2)
-	if len(parts) > 1 {
-		args := strings.Split(parts[1], "&")
-		for _, arg := range args {
-			if strings.HasPrefix(arg, "db=") {
-				db, err := strconv.Atoi(strings.TrimPrefix(arg, "db="))
-				if err != nil {
-					panic(err)
-				}
-				options = append(options, redis.DialDatabase(db))
-			} else if strings.HasPrefix(arg, "password=") {
-				options = append(options, redis.DialPassword(strings.TrimPrefix(arg, "password=")))
+	for key := range poolURI.Query() {
+		switch key {
+		case "username":
+			options = append(options, redis.DialUsername(poolQuery.Get(key)))
+		case "password":
+			options = append(options, redis.DialPassword(poolQuery.Get(key)))
+		case "db", "database":
+			database, xerr := strconv.ParseInt(poolQuery.Get(key), 10, 32)
+			if xerr != nil {
+				err = xerr
+				return
 			}
+			options = append(options, redis.DialDatabase(int(database)))
+		case "keepAlive":
+			keepAlive, xerr := strconv.ParseInt(poolQuery.Get(key), 10, 32)
+			if xerr != nil {
+				err = xerr
+				return
+			}
+			options = append(options, redis.DialKeepAlive(time.Duration(keepAlive)*time.Millisecond))
+		case "readTimeout":
+			readTimeout, xerr := strconv.ParseInt(poolQuery.Get(key), 10, 32)
+			if xerr != nil {
+				err = xerr
+				return
+			}
+			options = append(options, redis.DialReadTimeout(time.Duration(readTimeout)*time.Millisecond))
+		case "writeTimeout":
+			writeTimeout, xerr := strconv.ParseInt(poolQuery.Get(key), 10, 32)
+			if xerr != nil {
+				err = xerr
+				return
+			}
+			options = append(options, redis.DialWriteTimeout(time.Duration(writeTimeout)*time.Millisecond))
+		case "tlsUse":
+			if poolQuery.Get(key) != "1" {
+				break
+			}
+			tlsCert := poolQuery.Get("tlsCert")
+			tlsKey := poolQuery.Get("tlsKey")
+			tlsCA := poolQuery.Get("tlsCA")
+			tlsVerify := poolQuery.Get("tlsVerify") != "0"
+			// Load client cert
+			cert, xerr := tls.LoadX509KeyPair(tlsCert, tlsKey)
+			if xerr != nil {
+				err = xerr
+				break
+			}
+			// Load CA cert
+			ca, xerr := ioutil.ReadFile(tlsCA)
+			if xerr != nil {
+				err = xerr
+				break
+			}
+			certPool := x509.NewCertPool()
+			certPool.AppendCertsFromPEM(ca)
+			// tls config
+			tlsConf := &tls.Config{
+				Certificates:       []tls.Certificate{cert},
+				RootCAs:            certPool,
+				InsecureSkipVerify: !tlsVerify,
+			}
+			options = append(options, redis.DialUseTLS(true), redis.DialTLSConfig(tlsConf))
 		}
 	}
 	pool = NewConnPool(100, func() (conn redis.Conn, err error) {
-		conn, err = redis.Dial("tcp", parts[0], options...)
+		conn, err = redis.Dial("tcp", poolURI.Host, options...)
 		return
 	})
 	return
