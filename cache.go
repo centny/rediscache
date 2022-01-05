@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gomodule/redigo/redis"
 )
@@ -118,15 +120,22 @@ type Cache struct {
 	hited       map[string]uint64
 	hitedLck    sync.RWMutex
 	ShowLog     bool
+	ExpirerExpr map[string]time.Duration
+	expirerLast map[string]time.Time
+	expirerExit chan int
+	expirerOn   bool
 }
 
 //NewCache is the creator to create one cache pool by local memory max limit.
 func NewCache(memLimit uint64) *Cache {
 	return &Cache{
-		MemLimit: memLimit,
-		cache:    list.New(),
-		mcache:   map[string]*list.Element{},
-		hited:    map[string]uint64{},
+		MemLimit:    memLimit,
+		cache:       list.New(),
+		mcache:      map[string]*list.Element{},
+		hited:       map[string]uint64{},
+		ExpirerExpr: map[string]time.Duration{},
+		expirerLast: map[string]time.Time{},
+		expirerExit: make(chan int, 1),
 	}
 }
 
@@ -336,6 +345,43 @@ func (c *Cache) removeLocal(key string) {
 	c.cacheLck.Unlock()
 }
 
+func (c *Cache) Clear(expr string) (localRemoved int64, remoteRemoved int64, err error) {
+	localRemoved, err = c.removeLocalMatched(expr)
+	if err == nil {
+		remoteRemoved, err = c.removeRemoteMatched(expr)
+	}
+	return
+}
+
+func (c *Cache) removeRemoteMatched(expr string) (removed int64, err error) {
+	conn := C()
+	defer conn.Close()
+	removed, err = redis.Int64(conn.Do("EVAL", `return redis.call("del", "___", unpack(redis.call("keys", ARGV[1])))`, 0, expr))
+	c.log("Cache expire %v remote cache by expr %v success ", removed, expr)
+	return
+}
+
+func (c *Cache) removeLocalMatched(expr string) (removed int64, err error) {
+	reg, err := regexp.Compile(expr)
+	if err != nil {
+		return
+	}
+	c.cacheLck.Lock()
+	for key, element := range c.mcache {
+		if !reg.MatchString(key) {
+			continue
+		}
+		c.cache.Remove(element)
+		delete(c.mcache, element.Value.(*Item).Key)
+		old := element.Value.(*Item)
+		c.size -= old.Size()
+		c.log("Cache remove local cache(%v),size(%v), current used(%v)", old.Key, old.Size(), c.size)
+		removed++
+	}
+	c.cacheLck.Unlock()
+	return
+}
+
 // add data to local cache pool
 func (c *Cache) addLocal(key string, ver int64, wver string, data []byte) (newItem *Item) {
 	c.cacheLck.Lock()
@@ -450,5 +496,51 @@ func (c *Cache) WillQuery(key string, val interface{}, call func() (val interfac
 	}
 	reflect.Indirect(reflect.ValueOf(val)).Set(reflect.ValueOf(newval))
 	c.update(key, remoteCachVer, remoteNewWatch, newval)
+	return
+}
+
+func (c *Cache) StartExpirer(delay time.Duration) {
+	c.expirerOn = true
+	go c.loopExpirer(delay)
+}
+
+func (c *Cache) StopExpirer() {
+	c.expirerExit <- 1
+}
+
+func (c *Cache) loopExpirer(delay time.Duration) {
+	ticker := time.NewTicker(delay)
+	running := true
+	for running {
+		select {
+		case <-c.expirerExit:
+			running = false
+		case <-ticker.C:
+			c.procExpirer()
+		}
+	}
+	c.expirerOn = false
+}
+
+func (c *Cache) procExpirer() (err error) {
+	defer func() {
+		if perr := recover(); perr != nil {
+			c.log("Cache.Expirer proc expirer is panic with %v", perr)
+		}
+	}()
+	var localRemoved, remoteRemoved int64
+	for expr, delay := range c.ExpirerExpr {
+		last := c.expirerLast[expr]
+		if time.Since(last) < delay {
+			continue
+		}
+		localRemoved, remoteRemoved, err = c.Clear(expr)
+		if err != nil {
+			c.log("Cache.Expirer expire clear by expr %v fail with %v", expr, err)
+			break
+		}
+		c.expirerLast[expr] = time.Now()
+		c.log("Cache.Expirer expire clear by expr %v with local:%v,remote:%v keys is deleted", expr, localRemoved, remoteRemoved)
+	}
 	return
 }

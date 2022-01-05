@@ -197,3 +197,105 @@ func BenchmarkEnable(b *testing.B) {
 	state, _ := ctest.cache.State()
 	fmt.Println("don with size:", state)
 }
+
+func TestClear(t *testing.T) {
+	var err error
+	cache := NewCache(1024)
+	prefix := fmt.Sprintf("%v-", time.Now().UnixMilli())
+	key := fmt.Sprintf("%v01", prefix)
+	call := func() (val interface{}, err error) {
+		time.Sleep(time.Millisecond)
+		val = map[string]interface{}{
+			"val": float64(time.Now().UnixMilli()),
+		}
+		fmt.Println("call new value")
+		return
+	}
+
+	data1 := map[string]interface{}{}
+	err = cache.WillQuery(key, &data1, call)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	val1 := data1["val"].(float64)
+	if val1 < 1 {
+		t.Error("error")
+		return
+	}
+
+	data2 := map[string]interface{}{}
+	err = cache.WillQuery(key, &data2, call)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	val2 := data2["val"].(float64)
+	if val2 < 1 || val2 != val1 {
+		t.Error("error")
+		return
+	}
+
+	localRemoved, remoteRemoved, err := cache.Clear(prefix + "*")
+	if err != nil || localRemoved != 1 || remoteRemoved < 1 {
+		t.Errorf("%v,%v,%v", err, localRemoved, remoteRemoved)
+		return
+	}
+	data3 := map[string]interface{}{}
+	err = cache.WillQuery(key, &data3, call)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	val3 := data3["val"].(float64)
+	if val3 < 1 || val2 == val3 {
+		t.Error("error")
+		return
+	}
+}
+
+func TestExpirer(t *testing.T) {
+	var err error
+	cache := NewCache(1024)
+	cache.ShowLog = true
+	prefix := fmt.Sprintf("%v-", time.Now().UnixMilli())
+	key := fmt.Sprintf("%v01", prefix)
+	call := func() (val interface{}, err error) {
+		time.Sleep(time.Millisecond)
+		val = map[string]interface{}{
+			"val": float64(time.Now().UnixMilli()),
+		}
+		fmt.Println("call new value")
+		return
+	}
+	cache.ExpirerExpr[prefix+"*"] = 5 * time.Millisecond
+	cache.StartExpirer(10 * time.Millisecond)
+
+	data1 := map[string]interface{}{}
+	err = cache.WillQuery(key, &data1, call)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	val1 := data1["val"].(float64)
+	if val1 < 1 {
+		t.Error("error")
+		return
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	data2 := map[string]interface{}{}
+	err = cache.WillQuery(key, &data2, call)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	val2 := data2["val"].(float64)
+	if val2 < 1 || val2 == val1 {
+		t.Error("error")
+		return
+	}
+
+	cache.StopExpirer()
+}

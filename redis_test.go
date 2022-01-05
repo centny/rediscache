@@ -9,6 +9,10 @@ import (
 	"github.com/gomodule/redigo/redis"
 )
 
+func init() {
+	InitRedisPool("redis.loc:6379")
+}
+
 func TestNewConnPoolByURI(t *testing.T) {
 	_, err := NewConnPoolByURI("redis.loc:6379?tlsUse=1&tlsCA=ca.crt&tlsCert=client.crt&tlsKey=client.key&tlsVerify=0&keepAlive=3000&readTimeout=5000&writeTimeout=5000&username=abc&password=123&database=1")
 	if err != nil {
